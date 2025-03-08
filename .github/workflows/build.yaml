@@ -1,0 +1,81 @@
+name: Build and Package Jar
+on:
+  workflow_dispatch:
+env:
+  RUST_BACKTRACE: 'full'
+  MAVEN_GPG_PASSPHRASE: ${{ secrets.PASS_PHARASE }}
+  MAVEN_GPG_KEY: ${{ secrets.SIGN_KEY }}
+jobs:
+  build:
+    name: "Build Jar"
+    strategy:
+      matrix:
+        include:
+          - os: macos-13
+            arch: "x86_64"
+          - os: ubuntu-latest
+            arch: "x86_64"
+          - os: windows-latest
+            arch: "x86_64"
+    runs-on: ${{matrix.os}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Set up JDK 8 for x64
+        uses: actions/setup-java@v4
+        with:
+          java-version: '8.0'
+          distribution: 'temurin'
+      - name: Build with Maven
+        run: mvn -B package --file pom.xml
+      - run: mkdir staging && cp target/*.jar staging
+      - run: mkdir -p io/doraig/libs && cp -r target/classes/io/doraig/libs/* io/doraig/libs/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Package_${{matrix.os}}_${{matrix.arch}}
+          path: staging
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Library_${{matrix.os}}_${{matrix.arch}}
+          path: io/doraig/libs
+  build-and-include-nativelibs:
+    name: "Build Jar and include previous native libraries"
+    needs: build
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            arch: "arm64"
+    runs-on: ${{matrix.os}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Set up JDK 8 for arm64
+        uses: actions/setup-java@v2
+        with:
+          java-version: '8.0'
+          distribution: 'zulu'
+          architecture: 'arm64'
+      - uses: s4u/maven-settings-action@v3.0.0
+        with:
+          servers: '[{"id": "central", "username": "${{ secrets.USER }}", "password": "${{ secrets.TOKEN }}"}]'
+      - uses: actions/download-artifact@v4
+        with:
+          path: native-libs
+          pattern: Library_*
+      - name: Copy native libraries
+        run: |
+          cp -r native-libs/Library_*/*  native-libs/
+          rm -rf native-libs/Library_*
+      - name: Build with Maven
+        run: mvn -B deploy --file pom.xml
+      - run: mkdir staging && cp target/*.jar staging
+      - run: mkdir -p io/doraig/libs && cp -r target/classes/io/doraig/libs/* io/doraig/libs/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Package_macos-latest_arm64
+          path: staging
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Library_macos-latest_arm64
+          path: io/doraig/libs
